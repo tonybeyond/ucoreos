@@ -39,7 +39,7 @@
   "systemd": {
     "units": [
       {
-        "contents": "[Unit]\nDescription=Rebase to uCore and layer required packages\nWants=network-online.target\nAfter=network-online.target\n# This service should only run once on the very first boot.\nConditionPathExists=!/var/lib/setup-ucore.stamp\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n# The 'rpm-ostree rebase' command can take '--install' arguments to layer\n# packages during the rebase. This is the correct, atomic way to do it.\n# This command will stage the new image and then reboot the system.\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore-minimal:stable \\\n  --install=qemu-guest-agent \\\n  --install=akmod-nvidia \\\n  --install=xorg-x11-drv-nvidia-cuda \\\n  --install=nvidia-container-toolkit\n# The 'ExecStartPost' directive runs *after* the main command succeeds.\n# This is the correct way to create a stamp file for a one-shot service.\nExecStartPost=/usr/bin/touch /var/lib/setup-ucore.stamp\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Rebase to uCore NVIDIA and layer guest agent\nWants=network-online.target\nAfter=network-online.target\nConditionPathExists=!/var/lib/setup-ucore.stamp\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\n# Rebase to the 'ucore-nvidia' image, which has all drivers pre-included.\n# We only need to add the qemu-guest-agent for Proxmox integration.\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore-nvidia:stable --install=qemu-guest-agent\nExecStartPost=/usr/bin/touch /var/lib/setup-ucore.stamp\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "setup-ucore.service"
       },
@@ -48,12 +48,12 @@
         "name": "qemu-guest-agent.service"
       },
       {
-        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\n# It should run after the nvidia drivers are fully loaded and initialized.\n# The akmods service handles the kernel module building on boot.\nAfter=akmods.service\nWants=akmods.service\n\n[Service]\nType=oneshot\n# The nvidia-ctk tool is installed from the nvidia-container-toolkit package.\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\nAfter=akmods.service\nWants=akmods.service\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "nvidia-cdi-generate.service"
       },
       {
-        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target nvidia-cdi-generate.service\nAfter=network-online.target nvidia-cdi-generate.service\n\n[Service]\nRestart=always\n# Use ExecStartPre to ensure the image is up-to-date before starting.\nExecStartPre=-/usr/bin/podman pull docker.io/ollama/ollama:latest\n# The '--device nvidia.com/gpu=all' syntax correctly uses the CDI spec.\nExecStart=/usr/bin/podman run --rm --name ollama \\\n  --security-opt=label=disable \\\n  --device nvidia.com/gpu=all \\\n  -p 127.0.0.1:11434:11434 \\\n  -v ollama-data:/root/.ollama \\\n  docker.io/ollama/ollama:latest\nExecStop=/usr/bin/podman stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target nvidia-cdi-generate.service\nAfter=network-online.target nvidia-cdi-generate.service\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/podman pull docker.io/ollama/ollama:latest\nExecStart=/usr/bin/podman run --rm --name ollama \\\n  --security-opt=label=disable \\\n  --device nvidia.com/gpu=all \\\n  -p 127.0.0.1:11434:11434 \\\n  -v ollama-data:/root/.ollama \\\n  docker.io/ollama/ollama:latest\nExecStop=/usr/bin/podman stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "ollama-container.service"
       },
