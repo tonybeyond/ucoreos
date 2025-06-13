@@ -33,34 +33,61 @@
           "source": "data:,%5Bupdates%5D%0Aenabled%20%3D%20false%0A"
         },
         "mode": 420
+      },
+      {
+        "path": "/etc/yum.repos.d/docker-ce.repo",
+        "contents": {
+          "compression": "gzip",
+          "source": "data:;base64,H4sIAAAAAAAC/4yNPc7CMBBEe5/CRdpk9bWflAo4ASWi2KwHB8Wxo7XDz+1RYomaakaveO/ikkzQVtDmwkPA1USe0R93bA8ne96xbW0zcAarjGY7q4Z+LGXJ/0QuPWNI7Loq6yTNFO5xfdENLilTowjgjAeUvhqqQYO4jev/jF+8jJCp3gnv3wt+8eYTAAD//yDqnTXMAAAA"
+        },
+        "mode": 420
       }
     ]
   },
   "systemd": {
     "units": [
       {
-        "contents": "[Unit]\nDescription=Rebase to uCore NVIDIA, layer guest agent, and reboot\nWants=network-online.target\nAfter=network-online.target\nConditionPathExists=!/etc/ucore-rebase-stamp\n\n[Service]\nType=oneshot\n# Corrected: Use the proper uCore image name with NVIDIA support\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore:stable-nvidia --install=qemu-guest-agent\nExecStartPost=/usr/bin/touch /etc/ucore-rebase-stamp\nExecStartPost=/usr/bin/systemctl disable setup-ucore.service\nExecStartPost=/usr/bin/systemctl reboot\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Rebase to uCore NVIDIA, layer guest agent, and reboot\nWants=network-online.target\nAfter=network-online.target\nConditionPathExists=!/etc/ucore-rebase-stamp\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore:stable-nvidia --install=qemu-guest-agent\nExecStartPost=/usr/bin/touch /etc/ucore-rebase-stamp\nExecStartPost=/usr/bin/systemctl disable setup-ucore.service\nExecStartPost=/usr/bin/systemctl reboot\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "setup-ucore.service"
+      },
+      {
+        "contents": "[Unit]\nDescription=Remove default Docker packages\nWants=network-online.target\nAfter=network-online.target\nBefore=zincati.service\nConditionPathExists=!/var/lib/%N.stamp\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/rpm-ostree override remove moby-engine containerd runc docker-cli podman\nExecStart=/usr/bin/touch /var/lib/%N.stamp\n\n[Install]\nWantedBy=multi-user.target\n",
+        "enabled": true,
+        "name": "rpm-ostree-uninstall-docker.service"
+      },
+      {
+        "contents": "[Unit]\nDescription=Install Docker CE\nWants=network-online.target\nRequires=rpm-ostree-uninstall-docker.service\nAfter=rpm-ostree-uninstall-docker.service\nBefore=zincati.service\nConditionPathExists=!/var/lib/%N.stamp\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/rpm-ostree install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin\nExecStart=/usr/bin/touch /var/lib/%N.stamp\nExecStartPost=/usr/bin/systemctl reboot\n\n[Install]\nWantedBy=multi-user.target\n",
+        "enabled": true,
+        "name": "rpm-ostree-install-docker.service"
+      },
+      {
+        "enabled": true,
+        "name": "docker.service"
       },
       {
         "enabled": true,
         "name": "qemu-guest-agent.service"
       },
       {
-        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\nAfter=multi-user.target\nWants=multi-user.target\n\n[Service]\nType=oneshot\nExecStartPre=/usr/bin/sleep 15\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\nAfter=multi-user.target docker.service\nWants=multi-user.target docker.service\n\n[Service]\nType=oneshot\nExecStartPre=/usr/bin/sleep 15\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "nvidia-cdi-generate.service"
       },
       {
-        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target nvidia-cdi-generate.service\nAfter=network-online.target nvidia-cdi-generate.service\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/podman pull docker.io/ollama/ollama:latest\nExecStart=/usr/bin/podman run --rm --name ollama \\\n  --security-opt=label=disable \\\n  --device nvidia.com/gpu=all \\\n  -p 0.0.0.0:11434:11434 \\\n  -v ollama-data:/root/.ollama \\\n  docker.io/ollama/ollama:latest\nExecStop=/usr/bin/podman stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target docker.service nvidia-cdi-generate.service\nAfter=network-online.target docker.service nvidia-cdi-generate.service\n\n[Service]\nRestart=always\nTimeoutStartSec=15m\nExecStartPre=-/usr/bin/docker pull ollama/ollama:latest\nExecStart=/usr/bin/docker run --rm --name ollama \\\n  --runtime=nvidia \\\n  --gpus all \\\n  -p 0.0.0.0:11434:11434 \\\n  -v ollama-data:/root/.ollama \\\n  ollama/ollama:latest\nExecStop=/usr/bin/docker stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "ollama-container.service"
       },
       {
-        "contents": "[Unit]\nDescription=Tailscale container\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/podman pull docker.io/tailscale/tailscale:latest\nExecStart=/usr/bin/podman run --rm --name=tailscaled \\\n  -v /var/lib/tailscale:/var/lib/tailscale \\\n  -v /dev/net/tun:/dev/net/tun \\\n  --network=host \\\n  --cap-add=NET_ADMIN,NET_RAW \\\n  docker.io/tailscale/tailscale:latest\nExecStop=/usr/bin/podman stop tailscaled\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Tailscale container\nWants=network-online.target docker.service\nAfter=network-online.target docker.service\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/docker pull tailscale/tailscale:latest\nExecStart=/usr/bin/docker run --rm --name=tailscaled \\\n  -v /var/lib/tailscale:/var/lib/tailscale \\\n  -v /dev/net/tun:/dev/net/tun \\\n  --network=host \\\n  --cap-add=NET_ADMIN,NET_RAW \\\n  tailscale/tailscale:latest\nExecStop=/usr/bin/docker stop tailscaled\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "tailscale-container.service"
+      },
+      {
+        "contents": "[Unit]\nDescription=Beszel monitoring agent\nWants=network-online.target docker.service\nAfter=network-online.target docker.service\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/docker pull henrygd/beszel-agent:latest\nExecStart=/usr/bin/docker run --rm --name beszel-agent \\\n  --network host \\\n  -v /var/run/docker.sock:/var/run/docker.sock:ro \\\n  -e KEY=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4yxm1ANn7nACe+Rhw2ipuUWf53pC4cIEMjYLhb5oB0\" \\\n  -e LISTEN=45876 \\\n  henrygd/beszel-agent:latest\nExecStop=/usr/bin/docker stop beszel-agent\n\n[Install]\nWantedBy=multi-user.target\n",
+        "enabled": true,
+        "name": "beszel-agent.service"
       }
     ]
   }
