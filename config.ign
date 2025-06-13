@@ -39,7 +39,7 @@
   "systemd": {
     "units": [
       {
-        "contents": "[Unit]\nDescription=Rebase to uCore NVIDIA, layer guest agent, and reboot\nWants=network-online.target\nAfter=network-online.target\nConditionPathExists=!/etc/ucore-rebase-stamp\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore:stable-nvidia --install=qemu-guest-agent\nExecStartPost=/usr/bin/touch /etc/ucore-rebase-stamp\nExecStartPost=/usr/bin/systemctl disable setup-ucore.service\nExecStartPost=/usr/bin/systemctl reboot\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Rebase to uCore NVIDIA, reboot once done\nWants=network-online.target\nAfter=network-online.target\nConditionPathExists=!/etc/ucore-rebase-stamp\n\n[Service]\nType=oneshot\nExecStart=/usr/bin/rpm-ostree rebase ostree-unverified-registry:ghcr.io/ublue-os/ucore:stable-nvidia\nExecStartPost=/usr/bin/touch /etc/ucore-rebase-stamp\nExecStartPost=/usr/bin/systemctl disable setup-ucore.service\nExecStartPost=/usr/bin/systemctl reboot\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "setup-ucore.service"
       },
@@ -53,32 +53,27 @@
         "name": "docker-socket-symlink.service"
       },
       {
-        "contents": "[Unit]\nDescription=QEMU Guest Agent Container\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/podman pull docker.io/danskadra/qemu-ga:latest\nExecStart=/usr/bin/podman run --rm --name qemu-ga \\\n  -v /dev:/dev \\\n  -v /etc/os-release:/etc/os-release:ro \\\n  -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket \\\n  -v /sys/fs/cgroup:/sys/fs/cgroup \\\n  -v /sbin/shutdown:/sbin/shutdown \\\n  -v /bin/systemctl:/bin/systemctl \\\n  -v /usr/lib/systemd:/usr/lib/systemd \\\n  -v /lib64:/lib64 \\\n  --privileged \\\n  --uts=host \\\n  --net=host \\\n  docker.io/danskadra/qemu-ga:latest -v\nExecStop=/usr/bin/podman stop qemu-ga\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=QEMU Guest Agent (container)\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/podman pull docker.io/danskadra/qemu-ga:latest\nExecStart=/usr/bin/podman run --rm --name qemu-ga --privileged --uts=host --net=host -v /dev:/dev -v /etc/os-release:/etc/os-release:ro -v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket -v /sys/fs/cgroup:/sys/fs/cgroup -v /sbin/shutdown:/sbin/shutdown -v /bin/systemctl:/bin/systemctl -v /usr/lib/systemd:/usr/lib/systemd -v /lib64:/lib64 docker.io/danskadra/qemu-ga:latest -v\nExecStop=/usr/bin/podman stop qemu-ga\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "qemu-guest-agent-container.service"
       },
       {
-        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\nAfter=multi-user.target\nWants=multi-user.target\n\n[Service]\nType=oneshot\nExecStartPre=/usr/bin/sleep 15\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Generate CDI spec for NVIDIA GPUs\nAfter=multi-user.target\nWants=multi-user.target\n\n[Service]\nType=oneshot\nExecStartPre=/usr/bin/mkdir -p /etc/cdi\nExecStartPre=/usr/bin/sleep 15\nExecStart=/usr/bin/nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "nvidia-cdi-generate.service"
       },
       {
-        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target nvidia-cdi-generate.service\nAfter=network-online.target nvidia-cdi-generate.service\n\n[Service]\nRestart=always\nTimeoutStartSec=15m\nMemoryMax=28G\nExecStartPre=-/usr/bin/podman pull docker.io/ollama/ollama:latest\nExecStart=/usr/bin/podman run --rm --name ollama \\\n  --security-opt=label=disable \\\n  --device nvidia.com/gpu=all \\\n  -p 0.0.0.0:11434:11434 \\\n  -v ollama-data:/root/.ollama \\\n  docker.io/ollama/ollama:latest\nExecStop=/usr/bin/podman stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Ollama LLM Container with NVIDIA GPU\nWants=network-online.target\nAfter=network-online.target nvidia-cdi-generate.service\nRequires=nvidia-cdi-generate.service\n\n[Service]\nRestart=always\nTimeoutStartSec=15m\nExecStartPre=-/usr/bin/podman pull docker.io/ollama/ollama:latest\nExecStart=/usr/bin/podman run --rm --name ollama --security-opt label=disable --device nvidia.com/gpu=all -p 0.0.0.0:11434:11434 -v ollama-data:/root/.ollama docker.io/ollama/ollama:latest\nExecStop=/usr/bin/podman stop ollama\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "ollama-container.service"
       },
       {
-        "contents": "[Unit]\nDescription=Tailscale container\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/podman pull ghcr.io/tailscale/tailscale:latest\nExecStart=/usr/bin/podman run --rm --name=tailscaled \\\n  -v /var/lib/tailscale:/var/lib/tailscale \\\n  -v /dev/net/tun:/dev/net/tun \\\n  --network=host \\\n  --cap-add=NET_ADMIN,NET_RAW \\\n  ghcr.io/tailscale/tailscale:latest\nExecStop=/usr/bin/podman stop tailscaled\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Tailscale container\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nRestart=always\nExecStartPre=-/usr/bin/podman pull docker.io/tailscale/tailscale:latest\nExecStart=/usr/bin/podman run --rm --name tailscaled --network host --cap-add NET_ADMIN --cap-add NET_RAW -v /var/lib/tailscale:/var/lib/tailscale -v /dev/net/tun:/dev/net/tun docker.io/tailscale/tailscale:latest\nExecStop=/usr/bin/podman stop tailscaled\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "tailscale-container.service"
       },
       {
-        "contents": "[Unit]\nDescription=Enable Podman API for monitoring\nAfter=multi-user.target\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/loginctl enable-linger core\nExecStartPost=/usr/bin/runuser -l core -c 'systemctl --user enable podman.socket'\nExecStartPost=/usr/bin/runuser -l core -c 'systemctl --user start podman.socket'\n\n[Install]\nWantedBy=multi-user.target\n",
-        "enabled": true,
-        "name": "enable-podman-api.service"
-      },
-      {
-        "contents": "[Unit]\nDescription=Beszel monitoring agent with GPU and Podman support\nWants=network-online.target docker-socket-symlink.service enable-podman-api.service\nAfter=network-online.target docker-socket-symlink.service enable-podman-api.service\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/podman pull ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStartPre=/bin/bash -c 'CORE_UID=$(id -u core); ln -sf /run/user/$CORE_UID/podman /run/user/1000/podman || true'\nExecStart=/usr/bin/podman run --rm --name beszel-agent \\\n  --privileged \\\n  --network host \\\n  --device nvidia.com/gpu=all \\\n  -v /var/run/docker.sock:/var/run/docker.sock:ro \\\n  -v /run/user/1000/podman:/run/user/1000/podman:ro \\\n  -v /proc:/host/proc:ro \\\n  -v /sys:/host/sys:ro \\\n  -v /:/host/root:ro \\\n  -e KEY=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4yxm1ANn7nACe+Rhw2ipuUWf53pC4cIEMjYLhb5oB0\" \\\n  -e LISTEN=45876 \\\n  -e DOCKER_HOST=unix:///var/run/docker.sock \\\n  -e PODMAN_HOST=unix:///run/user/1000/podman/podman.sock \\\n  -e PATH=\"/usr/local/cuda/bin:/usr/bin:/bin\" \\\n  ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStop=/usr/bin/podman stop beszel-agent\n\n[Install]\nWantedBy=multi-user.target\n",
+        "contents": "[Unit]\nDescription=Beszel monitoring agent\nWants=network-online.target docker-socket-symlink.service\nAfter=network-online.target docker-socket-symlink.service\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/podman pull ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStart=/usr/bin/podman run --rm --name beszel-agent --network host -v /var/run/docker.sock:/var/run/docker.sock:ro -e KEY=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4yxm1ANn7nACe+Rhw2ipuUWf53pC4cIEMjYLhb5oB0\" -e LISTEN=45876 ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStop=/usr/bin/podman stop beszel-agent\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "beszel-agent.service"
       },
