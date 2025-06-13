@@ -75,6 +75,11 @@
         "contents": "[Unit]\nDescription=Beszel monitoring agent\nWants=network-online.target docker-socket-symlink.service\nAfter=network-online.target docker-socket-symlink.service\n\n[Service]\nRestart=always\nTimeoutStartSec=300\nExecStartPre=-/usr/bin/podman pull ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStart=/usr/bin/podman run --rm --name beszel-agent \\\n  --network host \\\n  -v /var/run/docker.sock:/var/run/docker.sock:ro \\\n  -e KEY=\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF4yxm1ANn7nACe+Rhw2ipuUWf53pC4cIEMjYLhb5oB0\" \\\n  -e LISTEN=45876 \\\n  ghcr.io/henrygd/beszel/beszel-agent:latest\nExecStop=/usr/bin/podman stop beszel-agent\n\n[Install]\nWantedBy=multi-user.target\n",
         "enabled": true,
         "name": "beszel-agent.service"
+      },
+      {
+        "contents": "[Unit]\nDescription=Open firewall port for Beszel agent\nAfter=firewalld.service\nWants=firewalld.service\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/bin/firewall-cmd --permanent --add-port=45876/tcp\nExecStart=/usr/bin/firewall-cmd --reload\n\n[Install]\nWantedBy=multi-user.target\n",
+        "enabled": true,
+        "name": "firewall-beszel.service"
       }
     ]
   }
